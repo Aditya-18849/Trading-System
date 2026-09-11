@@ -67,10 +67,14 @@ class Settings(BaseSettings):
     telegram_chat_id: str
 
     # Rate Limiting
-    rate_limit: str = "30/minute"  # max webhook calls per minute
+    rate_limit: str = "30/minute"
 
     # CORS
-    cors_origins: str = "*"  # comma-separated allowed origins
+    cors_origins: str = "*"
+
+    # Operating Mode
+    paper_trading_mode: bool = True  # True: Paper trading (simulated fills), False: Live broker execution
+    jwt_secret_key: str = "algo-trading-jwt-secret-key-sebi-v2"
 
     app_env: str = "production"
 

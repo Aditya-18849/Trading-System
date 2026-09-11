@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.schemas import StrategySignal, RegimeType
 
@@ -50,6 +50,8 @@ class StrategyContext(BaseModel):
 
     Contains all data a strategy needs to make a decision.
     """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     symbol: str
     exchange: str = "NSE"
     candles: pd.DataFrame  # OHLCV data with timestamp index

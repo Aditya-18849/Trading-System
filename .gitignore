@@ -51,3 +51,10 @@ frontend/out/
 frontend/build/
 frontend/*.log
 frontend/.env.local
+
+# ── Database & Backups ─────────────────────────
+*.db
+*.sqlite3
+backups/
+.license_lock
+

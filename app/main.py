@@ -98,8 +98,13 @@ async def lifespan(app: FastAPI):
     setup_logging(level="DEBUG" if settings.app_env == "development" else "INFO")
     logger.info("Starting SEBI-Compliant Algo Trading System v2.0.0")
 
-    # 2. Database tables
+    # 2. Database tables & auto-migrations
     Base.metadata.create_all(bind=engine)
+    try:
+        from scripts.migrate_db import migrate
+        migrate()
+    except Exception as m_exc:
+        logger.debug("Migration check: %s", m_exc)
     logger.info("Database tables verified / created")
 
     # 3. Broker — initialise adapters for all active users
@@ -227,9 +232,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start Strategy Engine Scheduler")
 
+    # 8. Live Market Feed Ingestion & Streaming Coordinator
+    try:
+        from app.services.live_feed import live_feed_coordinator
+        await live_feed_coordinator.start()
+        logger.info("LiveFeedCoordinator started (Streaming ticks & MTM P&L)")
+    except Exception:
+        logger.exception("Failed to start LiveFeedCoordinator")
+
     yield  # ── Application is running ──
 
     # Shutdown
+    try:
+        from app.services.live_feed import live_feed_coordinator
+        await live_feed_coordinator.stop()
+    except Exception:
+        pass
+
     if _position_monitor is not None:
         await _position_monitor.stop()
         logger.info("PositionMonitor shut down")
@@ -237,15 +256,6 @@ async def lifespan(app: FastAPI):
         _scheduler.shutdown(wait=False)
         logger.info("APScheduler shut down")
     await shutdown_scheduler()
-    logger.info("Shutting down Algo Trading System")  # ── Application is running ──
-
-    # Shutdown
-    if _position_monitor is not None:
-        await _position_monitor.stop()
-        logger.info("PositionMonitor shut down")
-    if _scheduler is not None:
-        _scheduler.shutdown(wait=False)
-        logger.info("APScheduler shut down")
     logger.info("Shutting down Algo Trading System")
 
 
@@ -330,12 +340,17 @@ try:
 except ImportError:
     logger.warning("Admin/Reports routes not available — skipping router registration")
 
-# ── Register Dashboard router ──────────────────────────────────────────────
+# ── Register Dashboard & Auth routers ──────────────────────────────────────
 try:
+    from app.routers.dashboard import router as dashboard_router, websocket_live
+    from app.routers.auth import router as auth_router
+
     app.include_router(dashboard_router)
-    logger.info("Dashboard router registered at /api")
-except ImportError:
-    logger.warning("Dashboard router not available — skipping")
+    app.include_router(auth_router)
+    app.websocket("/ws/live")(websocket_live)
+    logger.info("Dashboard and Auth routers registered successfully")
+except Exception as exc:
+    logger.warning("Router registration issue: %s", exc)
 
 
 # ── Global exception handler → Telegram alert ─────────────────────────────
@@ -363,6 +378,29 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 # ── Health / Status endpoints ──────────────────────────────────────────────
+
+@app.get("/", tags=["System"])
+async def root():
+    """Root landing endpoint: returns system overview and navigation links."""
+    return {
+        "name": "SEBI-Compliant Algo Trading System",
+        "version": "2.0.0",
+        "status": "online",
+        "timestamp": datetime.now(IST).isoformat(),
+        "endpoints": {
+            "docs": "/docs",
+            "redoc": "/redoc",
+            "health": "/health",
+            "status": "/status",
+            "portfolio": "/api/portfolio",
+            "recommendations": "/api/recommendations",
+            "regime": "/api/regime",
+            "performance": "/api/performance",
+            "webhook": "/webhook/tradingview",
+            "frontend_dashboard": "http://localhost:3000",
+        },
+    }
+
 
 @app.get("/health", tags=["System"])
 async def health_check():

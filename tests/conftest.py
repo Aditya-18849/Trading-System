@@ -18,11 +18,15 @@ UUID Compatibility:
 """
 
 import uuid
+import sqlite3
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
 
+sqlite3.register_adapter(uuid.UUID, lambda u: str(u))
+
 import pytest
 from sqlalchemy import create_engine, event, String
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 
 # ---------------------------------------------------------------------------
@@ -46,9 +50,7 @@ def _patch_uuid_for_sqlite(base_metadata, engine):
                 column.type = String(36)
             # Remove server_default that relies on PostgreSQL-only functions
             if column.server_default is not None:
-                sd_text = str(column.server_default.arg) if hasattr(column.server_default, "arg") else ""
-                if "gen_random_uuid" in sd_text or "uuid_generate" in sd_text:
-                    column.server_default = None
+                column.server_default = None
 
 
 # IST timezone constant (UTC+05:30)
@@ -63,12 +65,19 @@ _TEST_SETTINGS = {
     "supabase_url": None,
     "supabase_service_role_key": None,
     "tradingview_webhook_secret": "test-webhook-secret",
+    "admin_api_key": "test-admin-key",
+    "allowed_webhook_ips": None,
     "kite_api_key": "test-api-key",
     "kite_api_secret": "test-api-secret",
     "kite_user_id": "TEST01",
     "kite_password": "test-password",
     "kite_totp_secret": "test-totp",
     "kite_algo_id": "TEST-ALGO-001",
+    "angel_api_key": None,
+    "angel_client_id": None,
+    "angel_password": None,
+    "angel_totp_secret": None,
+    "angel_algo_id": None,
     "total_capital": 100000,
     "risk_per_trade_pct": 1.0,
     "max_daily_loss": 1000,
@@ -76,8 +85,19 @@ _TEST_SETTINGS = {
     "cooldown_minutes_after_loss": 20,
     "default_stoploss_pct": 0.5,
     "default_target_pct": 1.0,
+    "trailing_sl_pct": 0.3,
+    "trailing_sl_activation_pct": 0.3,
+    "monitor_poll_interval_sec": 5,
+    "monitor_pnl_check_interval_sec": 10,
+    "ws_reconnect_max_retries": 5,
+    "ws_reconnect_base_delay_sec": 2.0,
+    "heartbeat_interval_sec": 60,
+    "heartbeat_telegram_every_n": 10,
+    "auto_square_off_time": "15:15",
     "telegram_bot_token": "test-bot-token",
     "telegram_chat_id": "test-chat-id",
+    "rate_limit": "30/minute",
+    "cors_origins": "*",
     "app_env": "test",
 }
 
@@ -99,42 +119,51 @@ class _MockSettings:
 @pytest.fixture(scope="session")
 def test_engine():
     """Create a single in-memory SQLite engine for the entire test session."""
-    engine = create_engine("sqlite:///:memory:", echo=False)
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    from app.database import Base
+    _patch_uuid_for_sqlite(Base.metadata, engine)
+    Base.metadata.create_all(bind=engine)
     return engine
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _create_tables(test_engine):
-    """Create all ORM tables once for the test session.
-
-    The UUID-to-String patching is applied before table creation so that
-    SQLite can handle the PostgreSQL UUID column type.
-    """
-    from app.database import Base  # noqa: E402 – import after engine ready
-
-    _patch_uuid_for_sqlite(Base.metadata, test_engine)
-    Base.metadata.create_all(bind=test_engine)
-    yield
-    Base.metadata.drop_all(bind=test_engine)
 
 
 @pytest.fixture()
 def db_session(test_engine):
-    """Yield a fresh, isolated SQLAlchemy session per test.
-
-    A transaction is begun before the test and rolled back afterwards so that
-    each test starts with a clean slate.
-    """
-    connection = test_engine.connect()
-    transaction = connection.begin()
-    Session = sessionmaker(bind=connection)
+    """Yield a fresh SQLAlchemy session per test."""
+    from app.database import Base
+    Session = sessionmaker(bind=test_engine)
     session = Session()
 
     yield session
 
+    session.rollback()
+    # Clean up all table rows between tests
+    for table in reversed(Base.metadata.sorted_tables):
+        test_engine.execute(table.delete()) if hasattr(test_engine, 'execute') else session.execute(table.delete())
+    session.commit()
     session.close()
-    transaction.rollback()
-    connection.close()
+
+
+@pytest.fixture(autouse=True)
+def mock_db_engine(test_engine, db_session):
+    """Ensure engine, SessionLocal, and get_db throughout app use test_engine."""
+    import app.database
+    import app.main
+
+    TestSession = sessionmaker(bind=test_engine)
+
+    def _get_test_db():
+        yield db_session
+
+    with patch.object(app.database, "engine", test_engine), \
+         patch.object(app.main, "engine", test_engine), \
+         patch.object(app.database, "SessionLocal", TestSession), \
+         patch.object(app.database, "get_db", _get_test_db), \
+         patch.object(app.main, "get_db", _get_test_db):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -196,10 +225,11 @@ def test_strategy(db_session, test_user):
 
 
 @pytest.fixture()
-def test_client(db_session, test_user, test_strategy, mock_settings):
+def test_client(db_session, test_user, test_strategy, mock_settings, test_engine):
     """Yield a FastAPI ``TestClient`` with the DB dependency overridden."""
     from fastapi.testclient import TestClient
     from app.database import get_db
+    import app.main
     from app.main import app
 
     def _override_get_db():
@@ -207,8 +237,20 @@ def test_client(db_session, test_user, test_strategy, mock_settings):
 
     app.dependency_overrides[get_db] = _override_get_db
 
-    with TestClient(app, raise_server_exceptions=False) as client:
-        yield client
+    mock_notifier = AsyncMock()
+
+    with patch("app.main.engine", test_engine), \
+         patch("app.database.engine", test_engine), \
+         patch("app.main.get_db", _override_get_db), \
+         patch("app.main._get_notifier", return_value=mock_notifier), \
+         patch("app.notifications.telegram.TelegramNotifier.send_message", new_callable=AsyncMock), \
+         patch("app.notifications.telegram.TelegramNotifier.send_trade_notification", new_callable=AsyncMock), \
+         patch("app.notifications.telegram.TelegramNotifier.send_rejection_alert", new_callable=AsyncMock), \
+         patch("app.notifications.telegram.TelegramNotifier.send_error_alert", new_callable=AsyncMock), \
+         patch("app.main.start_scheduler", new_callable=AsyncMock), \
+         patch("app.main.shutdown_scheduler", new_callable=AsyncMock):
+        with TestClient(app, raise_server_exceptions=False) as client:
+            yield client
 
     app.dependency_overrides.clear()
 

@@ -1,110 +1,83 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import { 
+  Sparkles, 
+  Filter, 
+  RefreshCw, 
+  Sliders, 
+  CheckCircle2, 
+  XCircle, 
+  Clock 
+} from 'lucide-react';
+import { StrategySignalsWidget, StrategySignal } from '@/components/StrategySignalsWidget';
 import { api } from '@/lib/api';
-import { RecommendationCard } from '@/components/RecommendationCard';
-
-interface Recommendation {
-  id: string;
-  symbol: string;
-  exchange: string;
-  direction: 'BUY' | 'SELL';
-  entry_price: number;
-  stoploss_price: number;
-  target_price: number;
-  quantity: number;
-  capital_at_risk: number;
-  risk_reward_ratio: number | null;
-  confidence_score: number;
-  regime: string;
-  top_strategy_name: string;
-  ai_summary: string | null;
-  ai_key_risks: string | null;
-  ai_invalidation: string | null;
-  status: string;
-  created_at: string;
-  expires_at: string | null;
-}
-
-const regimeColors: Record<string, string> = {
-  'trending-up': 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400',
-  'trending-down': 'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400',
-  'range-bound': 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-  'high-volatility': 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-};
 
 export default function RecommendationsPage() {
-  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<'PENDING' | 'EXECUTED' | 'REJECTED' | 'EXPIRED' | 'ALL'>('PENDING');
+  const [recommendations, setRecommendations] = useState<StrategySignal[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [statusFilter, setStatusFilter] = useState<'PENDING' | 'EXECUTED' | 'REJECTED' | 'ALL'>('PENDING');
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const status = statusFilter === 'ALL' ? '' : statusFilter;
-        const res = await api.get(`/api/recommendations?status=${status}&limit=50`);
-        setRecommendations(res.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
-  }, [statusFilter]);
-
-  const handleExecute = async (rec: Recommendation) => {
-    if (!confirm(`Execute ${rec.direction} ${rec.symbol} x${rec.quantity} @ ₹${rec.entry_price}?`)) return;
+  const fetchData = async () => {
     try {
-      await api.post('/api/execute', { recommendation_id: rec.id, confirm: true });
-      setRecommendations(prev => prev.filter(r => r.id !== rec.id));
+      setIsRefreshing(true);
+      const status = statusFilter === 'ALL' ? '' : statusFilter;
+      const res = await api.get(`/api/recommendations?status=${status}&limit=50`).catch(() => ({ data: [] }));
+      setRecommendations(res.data || []);
     } catch (err) {
-      alert('Execution failed');
+      console.debug('Recommendations fetch:', err);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
+  useEffect(() => {
+    fetchData();
+  }, [statusFilter]);
+
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-dark-900 dark:text-dark-50">Recommendations</h1>
-          <p className="text-dark-500">AI-ranked trade signals with rationale</p>
+          <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-emerald-400" />
+            Strategy Engine Signals &amp; AI Thesis
+          </h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Multi-strategy algorithmic scanner with regime alignment scoring and automated risk checks
+          </p>
         </div>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as any)}
-          className="px-3 py-2 border border-dark-300 dark:border-dark-600 rounded-lg bg-white dark:bg-dark-800 text-dark-900 dark:text-dark-50"
-        >
-          <option value="PENDING">Pending</option>
-          <option value="EXECUTED">Executed</option>
-          <option value="REJECTED">Rejected</option>
-          <option value="EXPIRED">Expired</option>
-          <option value="ALL">All</option>
-        </select>
+
+        {/* Filter & Refresh */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-lg">
+            {(['PENDING', 'EXECUTED', 'REJECTED', 'ALL'] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => setStatusFilter(st)}
+                className={`px-3 py-1 rounded text-xs font-semibold transition-all ${
+                  statusFilter === st
+                    ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {st}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={fetchData}
+            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition-colors"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
+          </button>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-4 border-primary-500 border-t-transparent"></div>
-        </div>
-      ) : recommendations.length === 0 ? (
-        <div className="text-center py-12 text-dark-500">
-          <p className="text-lg">No recommendations found</p>
-          <p className="mt-2">Strategy engine runs at market open (09:15 IST)</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {recommendations.map((rec) => (
-            <RecommendationCard
-              key={rec.id}
-              recommendation={rec}
-              onExecute={() => handleExecute(rec)}
-            />
-          ))}
-        </div>
-      )}
+      {/* Main Signals List */}
+      <StrategySignalsWidget recommendations={recommendations} onRefresh={fetchData} />
     </div>
   );
 }

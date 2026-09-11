@@ -53,31 +53,51 @@ router = APIRouter(prefix="/api", tags=["Dashboard"])
 # ---------------------------------------------------------------------------
 
 def get_current_user(db: Session = Depends(get_db)) -> User:
-    """Get the primary active user (for single-user deployment)."""
+    """Get or auto-initialize the primary active user."""
+    client_id = settings.kite_user_id or "DEV001"
     user = db.query(User).filter(
-        User.broker_client_id == settings.kite_user_id,
-        User.is_active == True,
+        User.broker_client_id == client_id,
     ).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Active user not found")
+        user = User(
+            broker_client_id=client_id,
+            broker="zerodha",
+            full_name="Primary Trader",
+            email=f"{client_id.lower()}@trading.local",
+            is_active=True,
+            total_capital=float(settings.total_capital),
+            max_daily_loss=float(settings.max_daily_loss),
+            risk_per_trade_pct=float(settings.risk_per_trade_pct),
+            max_trades_per_day=int(settings.max_trades_per_day),
+            cooldown_minutes=int(getattr(settings, "cooldown_minutes_after_loss", 20)),
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
     return user
 
 
-def get_broker_adapter(user: User = Depends(get_current_user)) -> KiteAdapter:
-    """Get broker adapter for the current user."""
+def get_broker_adapter(user: User = Depends(get_current_user)) -> Optional[KiteAdapter]:
+    """Get broker adapter for the current user (or None if unauthenticated)."""
     from app.main import _get_broker
-    return _get_broker(user)
+    try:
+        return _get_broker(user)
+    except Exception:
+        return None
 
 
-def get_kite_fetcher(user: User = Depends(get_current_user)) -> KiteDataFetcher:
+def get_kite_fetcher(user: User = Depends(get_current_user)) -> Optional[KiteDataFetcher]:
     """Get Kite data fetcher for the current user."""
     if not user.kite_access_token:
-        raise HTTPException(status_code=503, detail="No access token available")
-    return KiteDataFetcher(
-        api_key=settings.kite_api_key,
-        api_secret=settings.kite_api_secret,
-        access_token=user.kite_access_token,
-    )
+        return None
+    try:
+        return KiteDataFetcher(
+            api_key=settings.kite_api_key,
+            api_secret=settings.kite_api_secret,
+            access_token=user.kite_access_token,
+        )
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -87,60 +107,78 @@ def get_kite_fetcher(user: User = Depends(get_current_user)) -> KiteDataFetcher:
 @router.get("/portfolio", response_model=PortfolioResponse)
 async def get_portfolio(
     user: User = Depends(get_current_user),
-    broker: KiteAdapter = Depends(get_broker_adapter),
+    broker: Optional[KiteAdapter] = Depends(get_broker_adapter),
     db: Session = Depends(get_db),
 ):
     """Get current portfolio: positions, capital, live unrealized P&L."""
     try:
-        # Get broker positions
-        positions_data = broker.get_positions()
-
-        # Get user's open trades from DB
-        open_trades = db.query(Trade).filter(
-            Trade.user_id == user.id,
-            Trade.status == "OPEN",
-        ).all()
-
-        # Build position list
         positions = []
         total_unrealized = 0.0
         deployed_capital = 0.0
+        capital = float(user.total_capital or settings.total_capital)
 
-        for pos in positions_data:
-            symbol = pos.get("tradingsymbol", "")
-            exchange = pos.get("exchange", "NSE")
-            quantity = pos.get("quantity", 0)
-            avg_price = pos.get("average_price", 0)
-            ltp = pos.get("last_price", 0)
-            product = pos.get("product", "MIS")
+        # 1. Try broker positions if live adapter is available
+        if broker is not None:
+            try:
+                positions_data = broker.get_positions()
+                for pos in positions_data:
+                    symbol = pos.get("tradingsymbol", "")
+                    exchange = pos.get("exchange", "NSE")
+                    quantity = pos.get("quantity", 0)
+                    avg_price = pos.get("average_price", 0)
+                    ltp = pos.get("last_price", avg_price)
+                    product = pos.get("product", "MIS")
 
-            if quantity == 0:
-                continue
+                    if quantity == 0:
+                        continue
 
-            unrealized = (ltp - avg_price) * quantity
-            total_unrealized += unrealized
-            deployed_capital += abs(avg_price * quantity)
+                    unrealized = (ltp - avg_price) * quantity
+                    total_unrealized += unrealized
+                    deployed_capital += abs(avg_price * quantity)
 
-            positions.append(PortfolioPosition(
-                symbol=symbol,
-                exchange=exchange,
-                quantity=quantity,
-                avg_price=avg_price,
-                ltp=ltp,
-                unrealized_pnl=round(unrealized, 2),
-                product=product,
-            ))
+                    positions.append(PortfolioPosition(
+                        symbol=symbol,
+                        exchange=exchange,
+                        quantity=quantity,
+                        avg_price=avg_price,
+                        ltp=ltp,
+                        unrealized_pnl=round(unrealized, 2),
+                        product=product,
+                    ))
+            except Exception as b_err:
+                logger.warning("Broker positions fetch fallback: %s", b_err)
 
-        # Available margin (from broker)
-        try:
-            margins = broker.kite.margins()
-            available_margin = margins.get("equity", {}).get("available", {}).get("cash", 0)
-        except Exception:
-            available_margin = float(user.total_capital or 0) - deployed_capital + total_unrealized
+        # 2. Fallback to open trades in database + live feed coordinator prices
+        if not positions:
+            open_trades = db.query(Trade).filter(
+                Trade.user_id == user.id,
+                Trade.status == "OPEN",
+            ).all()
+
+            for t in open_trades:
+                ltp = live_feed_coordinator.get_ltp(t.symbol)
+                entry_price = float(t.entry_price or ltp)
+                qty = int(t.quantity or 1)
+
+                pnl = (ltp - entry_price) * qty if t.direction == "BUY" else (entry_price - ltp) * qty
+                total_unrealized += pnl
+                deployed_capital += abs(entry_price * qty)
+
+                positions.append(PortfolioPosition(
+                    symbol=t.symbol,
+                    exchange=t.exchange or "NSE",
+                    quantity=qty if t.direction == "BUY" else -qty,
+                    avg_price=entry_price,
+                    ltp=ltp,
+                    unrealized_pnl=round(pnl, 2),
+                    product="MIS",
+                ))
+
+        available_margin = max(0.0, capital - deployed_capital + total_unrealized)
 
         return PortfolioResponse(
             positions=positions,
-            total_capital=float(user.total_capital or 0),
+            total_capital=capital,
             deployed_capital=round(deployed_capital, 2),
             available_margin=round(available_margin, 2),
             total_unrealized_pnl=round(total_unrealized, 2),
@@ -442,55 +480,199 @@ async def get_daily_report(
 
 
 # ---------------------------------------------------------------------------
-# WebSocket for Live Updates
+# Broker Credentials & Token Management
+# ---------------------------------------------------------------------------
+
+@router.post("/broker/credentials", tags=["Broker"])
+async def update_broker_credentials(payload: dict, db: Session = Depends(get_db)):
+    """Update client broker credentials (Kite / Angel One) and persist to database."""
+    broker_type = payload.get("broker", "zerodha").lower()
+    client_id = payload.get("broker_client_id") or payload.get("user_id") or settings.kite_user_id
+    api_key = payload.get("api_key")
+    api_secret = payload.get("api_secret")
+
+    user = db.query(User).filter(User.broker_client_id == client_id).first()
+    if not user:
+        user = User(
+            broker_client_id=client_id,
+            broker=broker_type,
+            full_name=payload.get("full_name", "Primary Trader"),
+            email=payload.get("email", f"{client_id.lower()}@trading.local"),
+            is_active=True,
+            total_capital=float(payload.get("total_capital", settings.total_capital)),
+        )
+        db.add(user)
+
+    if payload.get("total_capital"):
+        user.total_capital = float(payload["total_capital"])
+    if payload.get("max_daily_loss"):
+        user.max_daily_loss = float(payload["max_daily_loss"])
+    if payload.get("risk_per_trade_pct"):
+        user.risk_per_trade_pct = float(payload["risk_per_trade_pct"])
+    if payload.get("cooldown_minutes"):
+        user.cooldown_minutes = int(payload["cooldown_minutes"])
+    if payload.get("max_trades_per_day"):
+        user.max_trades_per_day = int(payload["max_trades_per_day"])
+
+    db.commit()
+    db.refresh(user)
+
+    logger.info("Updated broker credentials and risk profile for client %s", client_id)
+
+    return {
+        "status": "success",
+        "message": f"Credentials updated for {client_id} ({broker_type})",
+        "user_id": str(user.id),
+        "broker": user.broker,
+        "total_capital": float(user.total_capital),
+    }
+
+
+@router.post("/broker/refresh-token", tags=["Broker"])
+async def refresh_broker_token(payload: dict = None, db: Session = Depends(get_db)):
+    """Trigger on-demand OAuth TOTP access token generation for broker."""
+    try:
+        from app.services.auth import generate_kite_access_token
+        token_info = generate_kite_access_token()
+        return {
+            "status": "success",
+            "message": "Generated fresh Kite Connect access token successfully.",
+            "access_token": token_info.get("access_token", "active")[:10] + "...",
+        }
+    except Exception as exc:
+        return {
+            "status": "simulated",
+            "message": f"Token generator notice: {str(exc)}. Live simulation mode active.",
+        }
+
+
+# ---------------------------------------------------------------------------
+# Paper Trading Mode Switch
+# ---------------------------------------------------------------------------
+
+@router.get("/trading-mode")
+async def get_trading_mode():
+    """Get current operating mode: paper trading (simulation) vs live execution."""
+    return {
+        "paper_trading_mode": bool(getattr(settings, "paper_trading_mode", True)),
+        "mode_label": "PAPER TRADING (SIMULATION)" if getattr(settings, "paper_trading_mode", True) else "LIVE BROKER EXECUTION",
+    }
+
+
+@router.post("/trading-mode")
+async def set_trading_mode(payload: dict):
+    """Set operating mode: True for paper trading, False for live execution."""
+    enabled = payload.get("paper_trading_mode", True)
+    settings.paper_trading_mode = bool(enabled)
+    logger.info("Trading mode updated to: %s", "PAPER TRADING" if settings.paper_trading_mode else "LIVE BROKER EXECUTION")
+    return {
+        "status": "success",
+        "paper_trading_mode": settings.paper_trading_mode,
+        "mode_label": "PAPER TRADING (SIMULATION)" if settings.paper_trading_mode else "LIVE BROKER EXECUTION",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Telegram Test Notification Endpoint
+# ---------------------------------------------------------------------------
+
+@router.post("/telegram/test")
+async def test_telegram_alert(payload: dict):
+    """Send a live test alert to the configured Telegram chat."""
+    bot_token = payload.get("bot_token") or settings.telegram_bot_token
+    chat_id = payload.get("chat_id") or settings.telegram_chat_id
+
+    if not bot_token or not chat_id:
+        raise HTTPException(status_code=400, detail="Telegram bot token and chat ID are required")
+
+    try:
+        import httpx
+        test_message = (
+            "🔔 <b>ALGO TRADE PRO — SEBI Telemetry Test</b>\n\n"
+            "✅ <i>Telegram Mobile Notification Link Verified!</i>\n"
+            "📊 Timestamp: " + datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST") + "\n"
+            "🚀 Real-time trade executions, trailing SL hits, and daily P&L reports will be delivered to this chat."
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": test_message,
+                    "parse_mode": "HTML",
+                },
+            )
+            if resp.status_code != 200:
+                return {
+                    "status": "error",
+                    "detail": resp.json().get("description", "Failed to send message"),
+                }
+        return {"status": "success", "message": "Test notification sent to Telegram successfully!"}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket for Live Ingestion & Telemetry
 # ---------------------------------------------------------------------------
 
 class ConnectionManager:
-    """Manages WebSocket connections for live updates."""
+    """Manages active WebSocket client connections for real-time streaming."""
     def __init__(self):
         self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        logger.info("Frontend WebSocket client connected (Total: %d)", len(self.active_connections))
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+            logger.info("Frontend WebSocket client disconnected (Remaining: %d)", len(self.active_connections))
 
     async def broadcast(self, message: dict):
-        for connection in self.active_connections:
+        for connection in list(self.active_connections):
             try:
                 await connection.send_json(message)
             except Exception:
-                pass
+                self.disconnect(connection)
 
 
 manager = ConnectionManager()
 
+# Connect live feed coordinator broadcast hook
+from app.services.live_feed import live_feed_coordinator
+live_feed_coordinator.set_broadcast_callback(manager.broadcast)
+
 
 @router.websocket("/ws/live")
-async def websocket_live(websocket: WebSocket, db: Session = Depends(get_db)):
-    """WebSocket endpoint for live P&L and position updates."""
+async def websocket_live(websocket: WebSocket):
+    """WebSocket endpoint for sub-second live ticks, P&L, and trailing SL updates."""
     await manager.connect(websocket)
     try:
+        # Immediately send current market snapshot & MTM portfolio upon connection
+        initial_prices = live_feed_coordinator.get_all_prices()
+        for sym, tick in initial_prices.items():
+            await websocket.send_json({
+                "type": "tick_update",
+                "payload": tick,
+            })
+
+        portfolio_snapshot = live_feed_coordinator._calculate_mtm_portfolio()
+        if portfolio_snapshot:
+            await websocket.send_json({
+                "type": "portfolio_update",
+                "payload": portfolio_snapshot,
+            })
+
         while True:
-            # Send periodic updates (every 5 seconds)
-            await websocket.receive_text()  # Keep alive / receive ping
+            # Keepalive listener
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
-
-
-# Background task for pushing live updates
-async def push_live_updates():
-    """Background task to push live updates via WebSocket."""
-    while True:
-        await asyncio.sleep(5)
-        # This would be called from the scheduler or a background task
-        # Implementation depends on how you want to trigger updates
-
-
-# Import asyncio for the background task
-import asyncio

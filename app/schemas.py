@@ -64,6 +64,20 @@ class RiskCheckResult(BaseModel):
     target_price: Optional[float] = None
 
 
+class RiskCalculationResult(BaseModel):
+    """Result of risk calculation for a strategy signal."""
+    approved: bool
+    reason: Optional[str] = None
+    quantity: int
+    entry_price: float
+    stoploss_price: float
+    target_price: float
+    capital_at_risk: float
+    risk_reward_ratio: float
+    max_loss_if_sl_hit: float
+    max_profit_if_target_hit: float
+
+
 class WebhookResponse(BaseModel):
     """Standard response envelope for webhook endpoints."""
     status: Literal["EXECUTED", "REJECTED", "ERROR"]

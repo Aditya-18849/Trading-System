@@ -137,6 +137,14 @@ class TradingScheduler:
             except Exception as e:
                 logger.exception("Market close callback failed: %s", e)
 
+        # Automated daily database snapshot
+        try:
+            from scripts.backup_db import backup_database
+            backup_database()
+            logger.info("Daily database backup completed successfully.")
+        except Exception as b_err:
+            logger.warning("Daily database backup notice: %s", b_err)
+
     async def _run_polling(self):
         """Execute all polling callbacks (only during market hours)."""
         now = datetime.now(IST)

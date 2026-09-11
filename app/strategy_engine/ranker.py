@@ -14,6 +14,7 @@ from sqlalchemy import func, and_
 from app.models import StrategySignal as StrategySignalModel, PerformanceSnapshot
 from app.schemas import StrategySignal, RankedSignal, RegimeType
 from app.strategy_engine.base import BaseStrategy
+from app.strategy_engine.strategies import get_strategy_class
 
 logger = logging.getLogger(__name__)
 
@@ -95,34 +96,42 @@ class SignalRanker:
         cutoff_date = datetime.now(IST).date() - timedelta(days=30)
 
         for name in strategy_names:
-            perf = self.db.query(PerformanceSnapshot).filter(
-                PerformanceSnapshot.user_id == self.user_id,
-                PerformanceSnapshot.strategy_name == name,
-                PerformanceSnapshot.date >= cutoff_date,
-            ).all()
+            try:
+                perf = self.db.query(PerformanceSnapshot).filter(
+                    PerformanceSnapshot.user_id == self.user_id,
+                    PerformanceSnapshot.strategy_name == name,
+                    PerformanceSnapshot.date >= cutoff_date,
+                ).all()
+            except Exception:
+                perf = None
 
-            if perf:
-                total_trades = sum(p.trades_count for p in perf)
-                total_wins = sum(p.wins for p in perf)
-                total_pnl = sum(float(p.total_pnl) for p in perf)
-                avg_win_rate = sum(float(p.win_rate) for p in perf) / len(perf) if perf else 0
-                avg_expectancy = sum(float(p.expectancy or 0) for p in perf) / len(perf) if perf else 0
+            if perf and isinstance(perf, (list, tuple)):
+                matching = [p for p in perf if getattr(p, "strategy_name", name) == name]
+                if matching:
+                    total_trades = sum(getattr(p, "trades_count", 0) for p in matching)
+                    total_wins = sum(getattr(p, "wins", 0) for p in matching)
+                    total_pnl = sum(float(getattr(p, "total_pnl", 0)) for p in matching)
+                    avg_win_rate = sum(float(getattr(p, "win_rate", 0)) for p in matching) / len(matching) if matching else 0
+                    avg_expectancy = sum(float(getattr(p, "expectancy", 0) or 0) for p in matching) / len(matching) if matching else 0
 
-                self._perf_cache[name] = {
-                    "trades": total_trades,
-                    "win_rate": avg_win_rate / 100,  # Convert to 0-1
-                    "total_pnl": total_pnl,
-                    "expectancy": avg_expectancy,
-                    "sample_size": len(perf),
-                }
-            else:
-                self._perf_cache[name] = {
-                    "trades": 0,
-                    "win_rate": 0.5,  # Neutral
-                    "total_pnl": 0,
-                    "expectancy": 0,
-                    "sample_size": 0,
-                }
+                    win_rate = 0.5 if total_trades < 5 else avg_win_rate / 100
+
+                    self._perf_cache[name] = {
+                        "trades": total_trades,
+                        "win_rate": win_rate,
+                        "total_pnl": total_pnl,
+                        "expectancy": avg_expectancy,
+                        "sample_size": len(matching),
+                    }
+                    continue
+
+            self._perf_cache[name] = {
+                "trades": 0,
+                "win_rate": 0.5,  # Neutral
+                "total_pnl": 0,
+                "expectancy": 0,
+                "sample_size": 0,
+            }
 
     def _calculate_rank_score(
         self,
@@ -167,7 +176,6 @@ class SignalRanker:
         """
         # Get the strategy class to check suitable regimes
         try:
-            from app.strategy_engine.strategies import get_strategy_class
             strategy_class = get_strategy_class(signal.strategy_name)
             # Create temporary instance to check regimes
             temp_strategy = strategy_class()
@@ -181,7 +189,8 @@ class SignalRanker:
             return 0.5
 
         # Check if current regime is in suitable list
-        if current_regime in [r.value for r in suitable]:
+        suitable_values = [(r.value if hasattr(r, "value") else str(r)) for r in suitable]
+        if current_regime in suitable_values:
             return 1.0
 
         # Partial score for adjacent regimes
@@ -197,7 +206,7 @@ class SignalRanker:
         }
 
         adjacent = regime_adjacency.get(current_regime, [])
-        if any(r.value in adjacent for r in suitable):
+        if any(v in adjacent for v in suitable_values):
             return 0.5
 
         return 0.2  # Poor fit

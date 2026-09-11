@@ -101,7 +101,7 @@ class RegimeDetector:
         latest_ema_slope = ema_slope.iloc[-1] if not ema_slope.empty else np.nan
 
         # Update volatility history for percentile calculation
-        self._update_volatility_history(symbol, latest_atr)
+        self._update_volatility_history(symbol, atr)
 
         # Classify regime
         regime, confidence = self._classify_regime(
@@ -204,21 +204,16 @@ class RegimeDetector:
         # Default to range-bound
         return RegimeType.RANGE_BOUND, 0.6
 
-    def _update_volatility_history(self, symbol: str, atr: float):
+    def _update_volatility_history(self, symbol: str, atr_series: pd.Series):
         """Update rolling volatility history for percentile calculation."""
-        if symbol not in self._volatility_history:
-            self._volatility_history[symbol] = []
-
-        if not np.isnan(atr):
-            self._volatility_history[symbol].append(float(atr))
-            # Keep only recent history
-            if len(self._volatility_history[symbol]) > self.volatility_lookback:
-                self._volatility_history[symbol] = self._volatility_history[symbol][-self.volatility_lookback:]
+        valid_atr = atr_series.dropna().tolist()
+        if valid_atr:
+            self._volatility_history[symbol] = [float(x) for x in valid_atr[-self.volatility_lookback:]]
 
     def _get_volatility_percentile(self, symbol: str) -> float:
         """Calculate current volatility percentile."""
         history = self._volatility_history.get(symbol, [])
-        if len(history) < 10:
+        if len(history) < 5:
             return 50.0  # Default to median
 
         current = history[-1]

@@ -21,7 +21,7 @@ class User(Base):
     """
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     full_name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     broker = Column(String(50), nullable=False, default="zerodha")
@@ -33,6 +33,8 @@ class User(Base):
     max_daily_loss = Column(Numeric(14, 2), default=1000)
     max_trades_per_day = Column(Integer, default=3)
     cooldown_minutes = Column(Integer, default=20)
+    hashed_password = Column(String(255), nullable=True)
+    role = Column(String(50), default="admin")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=text("now()"))
 
@@ -50,7 +52,7 @@ class Strategy(Base):
     """
     __tablename__ = "strategies"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False)
     algo_id = Column(String(100), nullable=False)  # exchange-assigned Algo-ID
@@ -77,7 +79,7 @@ class Trade(Base):
     """
     __tablename__ = "trades"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
     symbol = Column(String(50), nullable=False)
@@ -116,7 +118,7 @@ class Order(Base):
     """
     __tablename__ = "orders"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     trade_id = Column(UUID(as_uuid=True), ForeignKey("trades.id", ondelete="CASCADE"), nullable=False)
     broker_order_id = Column(String(100))
     order_type = Column(String(20), nullable=False)  # ENTRY / STOPLOSS / TARGET / EXIT / MODIFY / CANCEL
@@ -141,7 +143,7 @@ class Log(Base):
     """
     __tablename__ = "logs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     level = Column(String(10), default="INFO")
     source = Column(String(100), nullable=False)
@@ -158,7 +160,7 @@ class Notification(Base):
     """
     __tablename__ = "notifications"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     channel = Column(String(50), default="telegram")
     category = Column(String(50), nullable=False)  # TRADE_EXECUTED / ERROR / DAILY_SUMMARY / TOKEN_REFRESH
@@ -187,7 +189,7 @@ class AuditTrail(Base):
     """
     __tablename__ = "audit_trail"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     timestamp = Column(DateTime(timezone=True), server_default=text("now()"), nullable=False, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     algo_id = Column(String(100))  # SEBI-mandated Algo-ID
@@ -223,7 +225,7 @@ class MarketData(Base):
     """
     __tablename__ = "market_data"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     symbol = Column(String(50), nullable=False)
     exchange = Column(String(10), default="NSE", nullable=False)
     interval = Column(String(10), nullable=False)  # 1m, 5m, 15m, 1h, 1d
@@ -249,7 +251,7 @@ class RegimeSnapshot(Base):
     """
     __tablename__ = "regime_snapshots"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     symbol = Column(String(50), nullable=False)
     exchange = Column(String(10), default="NSE", nullable=False)
     regime = Column(String(30), nullable=False)  # trending-up / trending-down / range-bound / high-volatility
@@ -277,7 +279,7 @@ class StrategySignal(Base):
     """
     __tablename__ = "strategy_signals"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     strategy_name = Column(String(100), nullable=False)
     symbol = Column(String(50), nullable=False)
     exchange = Column(String(10), default="NSE", nullable=False)
@@ -308,7 +310,7 @@ class Recommendation(Base):
     """
     __tablename__ = "recommendations"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     symbol = Column(String(50), nullable=False)
     exchange = Column(String(10), default="NSE", nullable=False)
     direction = Column(String(4), nullable=False)  # BUY / SELL
@@ -344,7 +346,7 @@ class PerformanceSnapshot(Base):
     """
     __tablename__ = "performance_snapshots"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     strategy_name = Column(String(100))  # NULL = portfolio aggregate
     symbol = Column(String(50))  # NULL = aggregate across symbols
@@ -379,7 +381,7 @@ class Watchlist(Base):
     """
     __tablename__ = "watchlist"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     symbol = Column(String(50), nullable=False)
     exchange = Column(String(10), default="NSE", nullable=False)
@@ -405,7 +407,7 @@ class DailyReport(Base):
     """
     __tablename__ = "daily_reports"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     report_date = Column(Date, nullable=False)
     total_pnl = Column(Numeric(14, 2), default=0)

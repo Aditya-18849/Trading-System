@@ -1,34 +1,34 @@
 'use client';
 
+import React from 'react';
 import {
-  LineChart,
-  Line,
+  AreaChart,
   Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from 'recharts';
+import { formatINR } from '@/lib/utils';
 
 interface EquityCurveChartProps {
   data: Array<{
     date: string;
     equity: number;
     pnl: number;
-    trades_count: number;
-    win_rate: number;
-    max_drawdown_pct: number;
+    trades_count?: number;
+    win_rate?: number;
+    max_drawdown_pct?: number;
   }>;
   height?: number;
 }
 
-export function EquityCurveChart({ data, height = 300 }: EquityCurveChartProps) {
+export function EquityCurveChart({ data = [], height = 320 }: EquityCurveChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center text-dark-500">
-        <p>No equity curve data available</p>
+      <div className="h-full flex items-center justify-center text-slate-500 text-xs font-mono py-12">
+        <p>No historical equity snapshots available yet.</p>
       </div>
     );
   }
@@ -39,59 +39,56 @@ export function EquityCurveChart({ data, height = 300 }: EquityCurveChartProps) 
     pnl: d.pnl,
   }));
 
-  const minEquity = Math.min(...chartData.map(d => d.equity));
-  const maxEquity = Math.max(...chartData.map(d => d.equity));
+  const minEquity = Math.min(...chartData.map((d) => d.equity));
+  const maxEquity = Math.max(...chartData.map((d) => d.equity));
   const padding = (maxEquity - minEquity) * 0.1 || 1000;
 
   return (
     <div className="w-full" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+        <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+          <defs>
+            <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#10b981" stopOpacity={0.25} />
+              <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 11, fill: '#64748b' }}
-            axisLine={{ stroke: '#e2e8f0' }}
+            tick={{ fontSize: 11, fill: '#94a3b8' }}
+            axisLine={{ stroke: '#334155' }}
             tickLine={false}
             interval="preserveStartEnd"
           />
           <YAxis
-            tick={{ fontSize: 11, fill: '#64748b' }}
+            tick={{ fontSize: 11, fill: '#94a3b8' }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(value) => `₹${(value / 100000).toFixed(1)}L`}
+            tickFormatter={(val) => `₹${(val / 1000).toFixed(0)}k`}
             domain={[minEquity - padding, maxEquity + padding]}
           />
           <Tooltip
             contentStyle={{
-              backgroundColor: '#1e293b',
-              border: 'none',
+              backgroundColor: '#0f172a',
+              border: '1px solid #334155',
               borderRadius: '8px',
               color: '#f8fafc',
-              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+              boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
+              fontSize: '12px',
             }}
-            formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, 'Equity']}
+            formatter={(value: number) => [formatINR(value), 'Portfolio Value']}
             labelFormatter={(date) => `Date: ${date}`}
           />
-          <Legend />
           <Area
             type="monotone"
             dataKey="equity"
-            stroke="#22c55e"
-            strokeWidth={2}
-            fillOpacity={0.1}
-            fill="#22c55e"
-            isAnimationActive={false}
+            stroke="#10b981"
+            strokeWidth={2.5}
+            fill="url(#equityGradient)"
+            isAnimationActive={true}
           />
-          <Line
-            type="monotone"
-            dataKey="equity"
-            stroke="#22c55e"
-            strokeWidth={2}
-            dot={false}
-            isAnimationActive={false}
-          />
-        </LineChart>
+        </AreaChart>
       </ResponsiveContainer>
     </div>
   );

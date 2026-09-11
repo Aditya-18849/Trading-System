@@ -25,18 +25,21 @@ def create_sample_candles(trend: str = "up", length: int = 100) -> pd.DataFrame:
 
     base_price = 2500.0
     if trend == "up":
-        drift = np.linspace(0, 50, length)  # 50 point uptrend
+        drift = np.linspace(0, 300, length)  # Strong 300 point uptrend
+        noise = np.random.randn(length) * 2
     elif trend == "down":
-        drift = np.linspace(0, -50, length)
+        drift = np.linspace(0, -300, length)  # Strong 300 point downtrend
+        noise = np.random.randn(length) * 2
     elif trend == "volatile":
-        drift = np.random.randn(length).cumsum() * 2
+        drift = np.random.randn(length).cumsum() * 10
+        noise = np.random.randn(length) * 25  # High volatility noise
     else:  # range
-        drift = np.sin(np.linspace(0, 4*np.pi, length)) * 20
+        drift = np.sin(np.linspace(0, 4*np.pi, length)) * 5
+        noise = np.random.randn(length) * 1
 
-    noise = np.random.randn(length) * 5
     close = base_price + drift + noise
-    high = close + np.abs(np.random.randn(length) * 3)
-    low = close - np.abs(np.random.randn(length) * 3)
+    high = close + np.abs(np.random.randn(length) * 3) + (10 if trend == "volatile" else 1)
+    low = close - np.abs(np.random.randn(length) * 3) - (10 if trend == "volatile" else 1)
     open_ = close + np.random.randn(length) * 2
     volume = np.random.randint(100000, 1000000, length)
 

@@ -18,15 +18,10 @@ from app.models import Log
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Configure the root logger with a structured console handler.
+    """Configure the root logger with structured console and rotating file handlers."""
+    import os
+    from logging.handlers import RotatingFileHandler
 
-    Sets up a ``StreamHandler`` writing to *stdout* with the format::
-
-        %(asctime)s | %(levelname)-8s | %(name)s | %(message)s
-
-    Args:
-        level: Logging level name (e.g. ``'DEBUG'``, ``'INFO'``).
-    """
     log_level = getattr(logging, level.upper(), logging.INFO)
 
     formatter = logging.Formatter(
@@ -34,16 +29,29 @@ def setup_logging(level: str = "INFO") -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(log_level)
-    handler.setFormatter(formatter)
+    # 1. Console Handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+
+    # 2. Rotating File Handler (50 MB per file, max 30 backups)
+    os.makedirs("logs", exist_ok=True)
+    file_handler = RotatingFileHandler(
+        filename=os.path.join("logs", "trading_system.log"),
+        maxBytes=50 * 1024 * 1024,
+        backupCount=30,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
 
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
 
     # Avoid duplicate handlers on repeated calls
     root_logger.handlers.clear()
-    root_logger.addHandler(handler)
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
 
 class DBLogWriter:

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.models import Trade, User
-from app.schemas import RiskCheckResult
+from app.schemas import RiskCheckResult, RiskCalculationResult
 
 # IST timezone offset (UTC+05:30)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -149,9 +149,11 @@ class RiskEngine:
         Returns:
             A dict with keys ``trade_count``, ``total_pnl``, and ``capital``.
         """
+        total_pnl = self._get_today_pnl()
+        trade_count = self._get_today_trade_count()
         return {
-            "trade_count": self._get_today_trade_count(),
-            "total_pnl": self._get_today_pnl(),
+            "trade_count": trade_count,
+            "total_pnl": total_pnl,
             "capital": self.total_capital,
         }
 
@@ -220,7 +222,23 @@ class RiskEngine:
         )
 
         if last_loss is None or last_loss.closed_at is None:
-return None
+            return None
+
+        now_ist = datetime.now(IST)
+
+        # Ensure closed_at is timezone-aware (IST) for comparison
+        closed_at = last_loss.closed_at
+        if closed_at.tzinfo is None:
+            closed_at = closed_at.replace(tzinfo=IST)
+
+        elapsed = now_ist - closed_at
+        elapsed_minutes = elapsed.total_seconds() / 60
+
+        if elapsed_minutes < self.cooldown_minutes:
+            remaining = int(self.cooldown_minutes - elapsed_minutes) + 1  # ceiling
+            return remaining
+
+        return None
 
 
 # =============================================================================
@@ -413,19 +431,3 @@ def calculate_risk_for_signal(
         max_loss_if_sl_hit=round(max_loss_if_sl_hit, 2),
         max_profit_if_target_hit=round(max_profit_if_target_hit, 2),
     )
-
-        now_ist = datetime.now(IST)
-
-        # Ensure closed_at is timezone-aware (IST) for comparison
-        closed_at = last_loss.closed_at
-        if closed_at.tzinfo is None:
-            closed_at = closed_at.replace(tzinfo=IST)
-
-        elapsed = now_ist - closed_at
-        elapsed_minutes = elapsed.total_seconds() / 60
-
-        if elapsed_minutes < self.cooldown_minutes:
-            remaining = int(self.cooldown_minutes - elapsed_minutes) + 1  # ceiling
-            return remaining
-
-        return None
