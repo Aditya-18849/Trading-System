@@ -45,7 +45,10 @@ export function AppShell({ children }: AppShellProps) {
 
   const handleManualRefresh = () => {
     setIsRefreshing(true);
-    setTimeout(() => setIsRefreshing(false), 500);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('manual_refresh'));
+    }
+    setTimeout(() => setIsRefreshing(false), 600);
   };
 
   // If on login page, render purely without sidebar/header

@@ -57,8 +57,13 @@ export default function DashboardHome() {
       }
     });
 
+    window.addEventListener('manual_refresh', fetchData);
+
     const interval = setInterval(fetchData, 20000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('manual_refresh', fetchData);
+    };
   }, []);
 
   return (

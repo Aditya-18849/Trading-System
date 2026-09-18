@@ -41,6 +41,8 @@ export default function PortfolioPage() {
 
   useEffect(() => {
     fetchData();
+    window.addEventListener('manual_refresh', fetchData);
+    return () => window.removeEventListener('manual_refresh', fetchData);
   }, []);
 
   const activePositions = livePortfolio?.positions || positions;

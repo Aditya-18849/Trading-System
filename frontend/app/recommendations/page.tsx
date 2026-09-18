@@ -33,6 +33,8 @@ export default function RecommendationsPage() {
 
   useEffect(() => {
     fetchData();
+    window.addEventListener('manual_refresh', fetchData);
+    return () => window.removeEventListener('manual_refresh', fetchData);
   }, [statusFilter]);
 
   return (
