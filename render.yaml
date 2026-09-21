@@ -1,0 +1,40 @@
+services:
+  # ── Backend Web Service ───────────────────────────────────────────────────
+  - type: web
+    name: trading-system-backend
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: TRADINGVIEW_WEBHOOK_SECRET
+        generateValue: true
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: KITE_API_KEY
+        sync: false
+      - key: KITE_API_SECRET
+        sync: false
+      - key: KITE_USER_ID
+        sync: false
+      - key: KITE_PASSWORD
+        sync: false
+      - key: KITE_TOTP_SECRET
+        sync: false
+      - key: KITE_ALGO_ID
+        value: "ALGO_SEBI_01"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: PAPER_TRADING_MODE
+        value: "true"

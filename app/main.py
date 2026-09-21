@@ -60,6 +60,7 @@ _scheduler = None  # APScheduler instance
 _auth_service = None  # AuthService instance
 _position_monitor: PositionMonitor | None = None
 _algo_service_active: bool = True  # Controls live automated execution
+_app_start_time: float = time.time()
 
 
 def _get_broker(user: User | None = None) -> "KiteAdapter | object":
@@ -307,13 +308,23 @@ async def request_logging_middleware(request: Request, call_next):
     response: Response = await call_next(request)
     elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-    logger.info(
-        "%s %s → %d (%.1f ms)",
-        request.method,
-        request.url.path,
-        response.status_code,
-        elapsed_ms,
-    )
+    # Avoid flooding Render free-tier logs on frequent keepalive cron checks
+    if request.url.path in ("/health", "/ping", "/healthz") and response.status_code < 400:
+        logger.debug(
+            "%s %s → %d (%.1f ms)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+    else:
+        logger.info(
+            "%s %s → %d (%.1f ms)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
     response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.1f}"
     return response
 
@@ -325,7 +336,7 @@ try:
     Instrumentator(
         should_group_status_codes=True,
         should_ignore_untemplated=True,
-        excluded_handlers=["/health", "/metrics"],
+        excluded_handlers=["/health", "/metrics", "/ping", "/healthz"],
     ).instrument(app).expose(app, include_in_schema=True, tags=["Metrics"])
     logger.info("Prometheus metrics enabled at /metrics")
 except ImportError:
@@ -392,6 +403,7 @@ async def root():
             "docs": "/docs",
             "redoc": "/redoc",
             "health": "/health",
+            "ping": "/ping",
             "status": "/status",
             "portfolio": "/api/portfolio",
             "recommendations": "/api/recommendations",
@@ -403,13 +415,55 @@ async def root():
     }
 
 
-@app.get("/health", tags=["System"])
-async def health_check():
-    """Liveness probe for load balancers and container orchestrators."""
-    return {
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["System"])
+@app.api_route("/healthz", methods=["GET", "HEAD"], tags=["System"], include_in_schema=False)
+async def health_check(check_db: bool = False):
+    """
+    Liveness and readiness probe for Render, load balancers, container orchestrators,
+    and keep-alive cron jobs.
+
+    - Default (check_db=False): Ultra-fast, zero-DB response. Perfect for cron jobs
+      pinging the service (e.g. every 10-14 minutes) to prevent Render free-tier spindown.
+    - Deep check (check_db=True): Validates active database connectivity.
+    """
+    uptime = round(time.time() - _app_start_time, 1)
+    data = {
         "status": "healthy",
-        "timestamp": datetime.now(IST).isoformat(),
+        "service": "trading-system-backend",
         "version": "2.0.0",
+        "uptime_seconds": uptime,
+        "timestamp": datetime.now(IST).isoformat(),
+        "environment": settings.app_env,
+    }
+
+    if check_db:
+        try:
+            from sqlalchemy import text
+            from app.database import SessionLocal
+
+            with SessionLocal() as db_session:
+                db_session.execute(text("SELECT 1"))
+            data["database"] = "connected"
+        except Exception as exc:
+            data["database"] = "unreachable"
+            data["database_error"] = str(exc)
+            data["status"] = "degraded"
+            return JSONResponse(status_code=503, content=data)
+
+    return data
+
+
+@app.api_route("/ping", methods=["GET", "HEAD"], tags=["System"])
+async def ping():
+    """
+    Ultra-lightweight ping endpoint for Render keep-alive cron jobs.
+    Returns HTTP 200 with minimal payload.
+    """
+    return {
+        "status": "ok",
+        "message": "pong",
+        "timestamp": datetime.now(IST).isoformat(),
+        "uptime_seconds": round(time.time() - _app_start_time, 1),
     }
 
 
@@ -938,15 +992,17 @@ async def resume_algo(request: Request):
     }
 
 
-# ── Uvicorn entry point (for local dev) ────────────────────────────────────
+# ── Uvicorn entry point (for local dev and container runners) ───────────────
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
+    port = int(os.environ.get("PORT", 8000))
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=settings.app_env == "development",
         log_level="info",
     )

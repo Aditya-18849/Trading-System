@@ -35,7 +35,7 @@ LICENSE_CHECK_TIMEOUT = float(os.getenv("LICENSE_CHECK_TIMEOUT", "2.0"))
 _BLOCKED_STATUSES = frozenset({"unpaid", "expired", "locked", "suspended", "inactive"})
 
 # Paths that bypass the license check (health probes, docs)
-_EXEMPT_PATHS = frozenset({"/health", "/metrics", "/docs", "/redoc", "/openapi.json"})
+_EXEMPT_PATHS = frozenset({"/health", "/healthz", "/ping", "/metrics", "/docs", "/redoc", "/openapi.json"})
 
 
 class LicenseGuardMiddleware(BaseHTTPMiddleware):

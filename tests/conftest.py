@@ -125,6 +125,7 @@ def test_engine():
         poolclass=StaticPool,
     )
     from app.database import Base
+    import app.models  # ensure models are registered on Base.metadata before create_all
     _patch_uuid_for_sqlite(Base.metadata, engine)
     Base.metadata.create_all(bind=engine)
     return engine
