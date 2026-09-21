@@ -10,7 +10,10 @@ import logging
 import os
 from typing import List, Optional, Dict, Any
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 from app.config import settings
 from app.schemas import RankedSignal, RegimeResult
@@ -41,11 +44,14 @@ class AISummaryGenerator:
         self.temperature = temperature
         self.max_tokens = max_tokens
 
-        if self.api_key:
+        if self.api_key and OpenAI is not None:
             self.client = OpenAI(api_key=self.api_key)
         else:
             self.client = None
-            logger.warning("OpenAI API key not configured — AI summaries will be disabled")
+            if OpenAI is None:
+                logger.info("openai package not installed — AI summaries will use rule-based fallback")
+            else:
+                logger.warning("OpenAI API key not configured — AI summaries will be disabled")
 
     def generate_summary(
         self,

@@ -50,5 +50,8 @@ pytest-cov>=6.0.0
 numpy>=1.26.0
 pandas>=2.2.0
 
+# ── AI / LLM (Trade Rationale Summaries) ───────
+openai>=1.50.0
+
 # ── Utilities ───────────────────────────────────
 python-dotenv>=1.0.1
