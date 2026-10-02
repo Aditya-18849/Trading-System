@@ -66,12 +66,17 @@ _app_start_time: float = time.time()
 def _get_broker(user: User | None = None) -> "KiteAdapter | object":
     """Return the broker adapter for a given user, falling back to default.
 
-    Supports both Zerodha and Angel One based on the user's ``broker`` field.
+    Supports Zerodha Kite, Angel One, and Alpaca based on the user's ``broker`` field.
     """
-    if user and user.broker_client_id in _brokers:
-        return _brokers[user.broker_client_id]
+    if user:
+        if user.broker_client_id and user.broker_client_id in _brokers:
+            return _brokers[user.broker_client_id]
+        if user.broker and user.broker.lower() in _brokers:
+            return _brokers[user.broker.lower()]
     if _default_broker is not None:
         return _default_broker
+    if "alpaca" in _brokers:
+        return _brokers["alpaca"]
     raise RuntimeError("Broker adapter not initialised — has the app started?")
 
 
@@ -168,6 +173,38 @@ async def lifespan(app: FastAPI):
                     )
             except ImportError:
                 logger.warning("Angel One SDK (smartapi-python) not installed — skipping")
+
+        # Tertiary: Alpaca Trading API (US Equities & Crypto)
+        alpaca_api_key = getattr(settings, "alpaca_api_key", None)
+        alpaca_secret_key = getattr(settings, "alpaca_secret_key", None)
+        alpaca_paper = getattr(settings, "alpaca_paper_trading", True)
+
+        if alpaca_api_key and alpaca_secret_key:
+            try:
+                from app.broker.alpaca import AlpacaAdapter
+
+                alpaca_adapter = AlpacaAdapter(
+                    api_key=alpaca_api_key,
+                    secret_key=alpaca_secret_key,
+                    paper=alpaca_paper,
+                    db=db,
+                )
+                _brokers["alpaca"] = alpaca_adapter
+
+                # Register by broker_client_id if an active Alpaca user exists in DB
+                alpaca_users = db.query(User).filter(User.broker.ilike("alpaca"), User.is_active.is_(True)).all()
+                for alp_user in alpaca_users:
+                    if alp_user.broker_client_id:
+                        _brokers[alp_user.broker_client_id] = alpaca_adapter
+
+                if _default_broker is None:
+                    _default_broker = alpaca_adapter
+                logger.info(
+                    "Broker adapter initialised (Alpaca Trading API - %s mode)",
+                    "PAPER" if settings.alpaca_paper_trading else "LIVE",
+                )
+            except Exception as alp_exc:
+                logger.warning("Failed to initialize AlpacaAdapter: %s", alp_exc)
     finally:
         db.close()
 

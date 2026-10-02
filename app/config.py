@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     angel_totp_secret: str | None = None
     angel_algo_id: str | None = None
 
+    # Broker (Alpaca Trading API — US Equities & Crypto)
+    alpaca_api_key: str | None = None
+    alpaca_secret_key: str | None = None
+    alpaca_paper_trading: bool = True
+
     # Risk management defaults (overridable per-user in DB)
     total_capital: float = 100000
     risk_per_trade_pct: float = 1.0
