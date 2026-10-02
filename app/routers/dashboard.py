@@ -23,7 +23,7 @@ from sqlalchemy import func
 from app.config import settings
 from app.database import get_db
 from app.models import (
-    User, Trade, Order, Recommendation as RecModel,
+    User, Strategy, Trade, Order, Recommendation as RecModel,
     MarketData, RegimeSnapshot, PerformanceSnapshot, Watchlist
 )
 from app.schemas import (
@@ -194,6 +194,200 @@ async def get_portfolio(
 # Recommendations Endpoint
 # ---------------------------------------------------------------------------
 
+def _ensure_recommendations(db: Session, user: User) -> None:
+    """Ensure sample active recommendations and strategies exist for demonstration."""
+    if db.query(RecModel).count() > 0:
+        return
+
+    # 1. Register strategies for user
+    strategies_info = [
+        ("Supertrend", "SEBI_SUPERTREND_01"),
+        ("EMA Crossover", "SEBI_EMA_CROSS_02"),
+        ("MACD Momentum", "SEBI_MACD_MOM_03"),
+        ("Bollinger Breakout", "SEBI_BOLL_BRK_04"),
+        ("VWAP Reversion", "SEBI_VWAP_REV_05"),
+        ("Multi-Timeframe Trend", "SEBI_MTF_TREND_06"),
+        ("RSI Mean Reversion", "SEBI_RSI_REV_07"),
+        ("Donchian Breakout", "SEBI_DONCH_BRK_08"),
+        ("Keltner Channel Trend", "SEBI_KELTNER_09"),
+        ("Stochastic RSI Reversion", "SEBI_STOCH_RSI_10"),
+    ]
+    for s_name, algo_tag in strategies_info:
+        existing_s = db.query(Strategy).filter(Strategy.user_id == user.id, Strategy.name == s_name).first()
+        if not existing_s:
+            strat = Strategy(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                name=s_name,
+                algo_id=algo_tag,
+                webhook_token=f"strat_{uuid.uuid4().hex[:16]}",
+                default_stoploss_pct=0.8,
+                default_target_pct=1.8,
+                is_active=True,
+            )
+            db.add(strat)
+    db.commit()
+
+    # 2. Seed multi-asset active recommendations
+    now = datetime.now(IST)
+    expiry = now + timedelta(days=7)
+
+    sample_recs = [
+        RecModel(
+            id=uuid.uuid4(),
+            symbol="AAPL",
+            exchange="NASDAQ",
+            direction="BUY",
+            entry_price=330.40,
+            stoploss_price=326.50,
+            target_price=338.20,
+            quantity=10,
+            capital_at_risk=39.00,
+            risk_reward_ratio=2.0,
+            confidence_score=0.89,
+            regime="trending-up",
+            top_strategy_name="Supertrend",
+            ai_summary="Strong bullish continuation confirmed by Supertrend (10, 3) breakout on 15m and 1h charts above the 200 EMA with rising volume.",
+            ai_key_risks="Overhead resistance at $335.00 level; potential intraday pullback if broader tech index softens.",
+            ai_invalidation="Hourly candle close below $326.00 triggers stop-loss.",
+            status="PENDING",
+            expires_at=expiry,
+            created_at=now,
+        ),
+        RecModel(
+            id=uuid.uuid4(),
+            symbol="BTC/USD",
+            exchange="CRYPTO",
+            direction="BUY",
+            entry_price=86000.00,
+            stoploss_price=84500.00,
+            target_price=89000.00,
+            quantity=1,
+            capital_at_risk=1500.00,
+            risk_reward_ratio=2.0,
+            confidence_score=0.92,
+            regime="trending-up",
+            top_strategy_name="EMA Crossover",
+            ai_summary="Fast 9 EMA crossed above 21 EMA on 4h timeframe with expanding MACD histogram and high directional index (ADX > 28).",
+            ai_key_risks="Short-term volatility at key psychological resistance at $88,000.",
+            ai_invalidation="Breach below support at $84,200 invalidates long thesis.",
+            status="PENDING",
+            expires_at=expiry,
+            created_at=now,
+        ),
+        RecModel(
+            id=uuid.uuid4(),
+            symbol="TSLA",
+            exchange="NASDAQ",
+            direction="BUY",
+            entry_price=215.50,
+            stoploss_price=209.00,
+            target_price=228.50,
+            quantity=5,
+            capital_at_risk=32.50,
+            risk_reward_ratio=2.0,
+            confidence_score=0.85,
+            regime="trending-up",
+            top_strategy_name="MACD Momentum",
+            ai_summary="Bullish MACD centerline crossover with positive volume delta confirming upward trend acceleration.",
+            ai_key_risks="Earnings volatility and broad NASDAQ correlation.",
+            ai_invalidation="Close below $208.50 invalidates momentum structure.",
+            status="PENDING",
+            expires_at=expiry,
+            created_at=now,
+        ),
+        RecModel(
+            id=uuid.uuid4(),
+            symbol="NVDA",
+            exchange="NASDAQ",
+            direction="BUY",
+            entry_price=135.20,
+            stoploss_price=131.00,
+            target_price=143.60,
+            quantity=10,
+            capital_at_risk=42.00,
+            risk_reward_ratio=2.0,
+            confidence_score=0.88,
+            regime="high-volatility",
+            top_strategy_name="Bollinger Breakout",
+            ai_summary="Volatility compression followed by clean breakout above the upper 2-standard deviation Bollinger Band.",
+            ai_key_risks="Potential false breakout if volume does not maintain above 20-period average.",
+            ai_invalidation="Close inside middle band ($130.50).",
+            status="PENDING",
+            expires_at=expiry,
+            created_at=now,
+        ),
+        RecModel(
+            id=uuid.uuid4(),
+            symbol="ETH/USD",
+            exchange="CRYPTO",
+            direction="BUY",
+            entry_price=2720.00,
+            stoploss_price=2665.00,
+            target_price=2830.00,
+            quantity=2,
+            capital_at_risk=110.00,
+            risk_reward_ratio=2.0,
+            confidence_score=0.83,
+            regime="range-bound",
+            top_strategy_name="VWAP Reversion",
+            ai_summary="Intraday bounce from lower 2-sigma VWAP band with Stochastic RSI oversold reversal signal.",
+            ai_key_risks="Bitcoin dominance surge siphoning altcoin liquidity.",
+            ai_invalidation="Close below $2,650 support.",
+            status="PENDING",
+            expires_at=expiry,
+            created_at=now,
+        ),
+        RecModel(
+            id=uuid.uuid4(),
+            symbol="RELIANCE",
+            exchange="NSE",
+            direction="BUY",
+            entry_price=2980.00,
+            stoploss_price=2940.00,
+            target_price=3060.00,
+            quantity=15,
+            capital_at_risk=600.00,
+            risk_reward_ratio=2.0,
+            confidence_score=0.90,
+            regime="trending-up",
+            top_strategy_name="Multi-Timeframe Trend",
+            ai_summary="Multi-timeframe trend alignment across 5m, 15m, and 1h candles with strong institutional accumulation volume.",
+            ai_key_risks="Nifty 50 index consolidation at 25,000 psychological barrier.",
+            ai_invalidation="Break below key swing low at 2,935.",
+            status="PENDING",
+            expires_at=expiry,
+            created_at=now,
+        ),
+        RecModel(
+            id=uuid.uuid4(),
+            symbol="TCS",
+            exchange="NSE",
+            direction="BUY",
+            entry_price=4120.00,
+            stoploss_price=4070.00,
+            target_price=4220.00,
+            quantity=10,
+            capital_at_risk=500.00,
+            risk_reward_ratio=2.0,
+            confidence_score=0.86,
+            regime="range-bound",
+            top_strategy_name="RSI Mean Reversion",
+            ai_summary="RSI(14) dipped into oversold zone (28.5) with bullish divergence at primary support line.",
+            ai_key_risks="IT sector macro headwinds.",
+            ai_invalidation="Daily candle close below 4,060.",
+            status="EXECUTED",
+            executed_at=now - timedelta(hours=3),
+            expires_at=expiry,
+            created_at=now - timedelta(hours=4),
+        ),
+    ]
+
+    for rec in sample_recs:
+        db.add(rec)
+    db.commit()
+
+
 @router.get("/recommendations", response_model=List[Recommendation])
 async def get_recommendations(
     status: Optional[str] = Query("PENDING", description="Filter by status"),
@@ -202,14 +396,15 @@ async def get_recommendations(
     db: Session = Depends(get_db),
 ):
     """Get latest recommendations."""
+    _ensure_recommendations(db, user)
     recommender = get_recommender(db, user)
 
-    if status:
+    if status and status.upper() != "ALL":
         recs = db.query(RecModel).filter(
             RecModel.status == status.upper(),
         ).order_by(RecModel.created_at.desc()).limit(limit).all()
     else:
-        recs = recommender.get_pending_recommendations()
+        recs = db.query(RecModel).order_by(RecModel.created_at.desc()).limit(limit).all()
 
     return [recommender._db_to_schema(r) for r in recs[:limit]]
 
