@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { getToken, removeToken } from './auth';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://trading-system-d2v3.onrender.com';
 
 export const api = axios.create({
   baseURL: API_BASE,

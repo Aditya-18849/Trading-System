@@ -47,10 +47,10 @@ class WSClient {
       this.messageHandlers.add(onMessage);
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const protocol = (typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
     const host = process.env.NEXT_PUBLIC_API_URL 
       ? process.env.NEXT_PUBLIC_API_URL.replace(/^http(s)?:\/\//, '')
-      : '127.0.0.1:8000';
+      : 'trading-system-d2v3.onrender.com';
 
     const wsUrl = `${protocol}//${host}${path}`;
 
