@@ -26,17 +26,21 @@ def setup_sqlite_ddl(target, connection, **kw):
                 if column.server_default is not None:
                     column.server_default = None
 
-is_postgres = "postgres" in settings.database_url.lower()
+db_url = settings.database_url
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+is_postgres = "postgres" in db_url.lower()
 
 engine_kwargs = {}
 if is_postgres:
     engine_kwargs["poolclass"] = NullPool  # Disables SQLAlchemy pooling to let pgBouncer handle it
     engine_kwargs["connect_args"] = {"options": "-c timezone=Asia/Kolkata"}
-elif "sqlite" in settings.database_url.lower():
+elif "sqlite" in db_url.lower():
     engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 engine = create_engine(
-    settings.database_url,
+    db_url,
     **engine_kwargs
 )
 
